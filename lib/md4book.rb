@@ -5,7 +5,11 @@ require "kramdown"
 $cap_no = [0,0,0,0,0,0]
 $cap_kanji = ["","章","節","項","",""]
 $img_count = 0
+$tbl_count = 0
 $id_map = {}
+$opt = {
+  :check_table_title => false,
+}
 module Kramdown
   module Converter
     class Html < Base
@@ -24,9 +28,11 @@ module Kramdown
         end
         cap_no_str = $cap_no.reject{|c|c == 0}.map{|c| c == 0 ? "" : c.to_s}.join("-")
         cap_header = cap_no_str + $cap_kanji[level] 
-        cited =  cap_header + "「" + inner(el, indent) + "」" #相互参照の文字列
+        cited =  cap_header + "." + inner(el, indent) #相互参照の文字列
         text =  cap_header + "." + inner(el, indent) #章の文字列
+
         if attr['id']
+          # 相互参照用にグローバル変数に格納
           $id_map[attr['id']] = {
             :id => attr['id'], 
             :cap_header => cap_header,
@@ -37,10 +43,14 @@ module Kramdown
             :location => el.options[:location]
           }
         end
+
+        # 章が変わるとリセットされる値を更新
         if level == 1
-          $ing_count = 0
+          $img_count = 0
+          $tbl_count = 0
         end
-        format_as_block_html("h#{level}", attr, text, indent)
+
+        return format_as_block_html("h#{level}", attr, text, indent)
       end
 
       # @override
@@ -48,6 +58,7 @@ module Kramdown
         $img_count += 1
         cited = "図#{$cap_no[1]}-#{$img_count}.#{el.attr['alt']}"
         if el.attr['id']
+          # 相互参照用にグローバル変数に格納
           $id_map[el.attr['id']] = {
             :id => el.attr['id'], 
             :src => el.attr['src'], 
@@ -60,6 +71,27 @@ module Kramdown
         caption = cited
         return "<center>" + img_tag + "<br/>\n" + caption + "</center>" 
       end
+
+      def convert_table(el, indent)
+        if !el.attr['title'] && $opt[:check_table_title]
+          raise "Table title is not defined at line:#{el.options[:location]}"
+        end
+        $tbl_count += 1
+        cited = "表#{$cap_no[1]}-#{$tbl_count}.#{el.attr['title']}"
+        if el.attr['id']
+          # 相互参照用にグローバル変数に格納
+          $id_map[el.attr['id']] = {
+            :id => el.attr['id'], 
+            :alt => el.attr['title'], 
+            :cited => cited,
+            :location => el.options[:location]
+          }
+        end
+        tbl_tag = format_as_indented_block_html(el.type, el.attr, inner(el, indent), indent)
+        caption = cited
+        return "<center>" + caption + "<br/>\n" + tbl_tag + "</center>" 
+      end
+
 
       # Return the converted content of the children of +el+ as a string. The parameter +indent+ has
       # to be the amount of indentation used for the element +el+.
@@ -82,6 +114,8 @@ module Kramdown
 end
 
 module Md4book
+  class Md4bookException < StandardError ; end
+
   module_function
   def to_html(md)
     body = Kramdown::Document.new(md).to_html
